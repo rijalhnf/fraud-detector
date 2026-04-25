@@ -1,0 +1,62 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-fraud-detector-api
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3.5:9b
+      CHROMA_DB_PATH: /data/chroma
+      CHROMA_COLLECTION_NAME: fraud_knowledge
+    volumes:
+      - ./chroma_db:/data/chroma
+      - ./knowledge:/app/knowledge:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  api-prod:
+    profiles: ["production"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-fraud-detector-api-prod
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3.5:9b
+      CHROMA_DB_PATH: /data/chroma
+      CHROMA_COLLECTION_NAME: fraud_knowledge
+    volumes:
+      - ./chroma_db:/data/chroma
+      - ./knowledge:/app/knowledge:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    cpus: "2.0"
+    mem_limit: 4g
+    mem_reservation: 1g
+    restart: unless-stopped
