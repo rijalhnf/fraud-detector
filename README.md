@@ -8,11 +8,11 @@ FastAPI backend for a two-step fraud analysis workflow:
 ## Features
 
 - FastAPI REST API with CORS support.
-- PDF text extraction via pdfplumber, with PyMuPDF fallback.
-- Heuristic Beneish variable extraction with fallback defaults.
+- AI vision OCR for short financial statement PDFs using the configured OpenRouter or Ollama model.
+- PDF pages are rendered with PyMuPDF and sent to the model for structured variable extraction.
 - Beneish 8-ratio calculation and final M-Score.
 - RAG retrieval from ChromaDB documents (PSAK 72 and OJK-related references).
-- Local LLM narrative generation via Ollama (`qwen3.5:9b`).
+- Local LLM narrative generation via Ollama or OpenRouter.
 - Dockerized deployment with a production profile.
 
 ## Tech Stack and Versions
@@ -22,9 +22,9 @@ FastAPI backend for a two-step fraud analysis workflow:
 - ASGI Server: `Uvicorn 0.35.0` (`uvicorn[standard]`)
 - HTTP Client: `requests 2.32.4`
 - File Upload Parsing: `python-multipart 0.0.20`
-- PDF Extraction: `pdfplumber 0.11.7`, `PyMuPDF 1.26.3`
+- PDF Rendering: `PyMuPDF 1.26.3`
 - Vector Database: `ChromaDB 1.0.17`
-- LLM Runtime: `Ollama` (model: `qwen3.5:9b`)
+- LLM Runtime: `OpenRouter` or `Ollama`
 - Container Runtime: `Docker` + `Docker Compose`
 
 ## API Flow
@@ -32,8 +32,9 @@ FastAPI backend for a two-step fraud analysis workflow:
 ### Endpoint 1: POST /api/upload
 
 - Accepts a PDF file upload.
-- Extracts text from PDF.
-- Parses Beneish input variables heuristically.
+- Renders the PDF pages as images and sends them to the configured AI provider for OCR.
+- Extracts Beneish input variables from the model response.
+- Intended for short financial statement PDFs, usually about 2 to 4 pages.
 - Returns extracted variables to frontend for user validation.
 
 ### Endpoint 2: POST /api/analyze
@@ -47,18 +48,51 @@ Accepts validated variables from frontend, then executes:
 
 ## Required Environment Variables
 
-- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` (default: `qwen3.5:9b`)
-- `CHROMA_DB_PATH` (default: `./chroma_db`)
+You must configure the AI provider using a `.env` file in the root directory:
+
+```dotenv
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OLLAMA_MODEL=gemma4:26b
+```
+*or AI_PROVIDER=local
+
+Other internal variables set in `docker-compose.yml`:
+- `OLLAMA_BASE_URL` (default: `http://host.docker.internal:11434`)
+- `CHROMA_DB_PATH` (default: `/data/chroma`)
 - `CHROMA_COLLECTION_NAME` (default: `fraud_knowledge`)
 
 ## Docker Run
 
-### Standard service
+### Quick Start (Step-by-Step)
+
+**Step 1: Configure Environment Variables**
+Ensure your `.env` file is set up as shown above.
+
+**Step 2: Add Knowledge Base Documents (RAG)**
+Put your source files (PSAK 115, OJK rules) in the `knowledge/` folder. Supported formats: `.pdf`, `.txt`, `.md`.
+
+**Step 3: Build and Run the Docker Container**
+Start the backend server in the background:
+```bash
+docker compose up --build -d
+```
+
+**Step 4: Ingest Knowledge Documents into ChromaDB**
+Once the container is running, execute this command to parse and insert the PDFs into the vector database. You only need to run this once, or whenever you add new files to the `knowledge/` folder.
+```bash
+docker compose exec api python scripts/ingest_knowledge.py --input-dir /app/knowledge --db-path /data/chroma --collection fraud_knowledge --reset
+```
+When it finishes, the terminal will output the number of chunks added to the database.
+
+**Step 5: Test the API**
+Verify the backend is running by opening `http://localhost:8000/health` in your browser.
+
+### Stop services
 
 ```bash
-docker compose build
-docker compose up -d api
+docker compose down
 ```
 
 ### Production profile (resource limits + healthcheck)
@@ -67,53 +101,12 @@ docker compose up -d api
 docker compose --profile production up -d api-prod
 ```
 
-The `api-prod` service includes:
-
-- Healthcheck to `/health`
-- CPU limit: `2.0`
-- Memory limit: `4g`
-- Memory reservation: `1g`
-
-### Stop services
-
-```bash
-docker compose down
-```
-
 ## ChromaDB Data Persistence
 
 - Host path: `./chroma_db`
 - Container path: `/data/chroma`
 
 Data remains on host volume between container restarts.
-
-## How to Provide PSAK 72 and OJK Letter Documents
-
-1. Put your source files in the `knowledge` folder:
-  - Supported formats: `.pdf`, `.txt`, `.md`
-  - Example names:
-    - `knowledge/PSAK_72.pdf`
-    - `knowledge/OJK_Sanction_Letter_2024.pdf`
-
-2. Start the API container (if not running):
-
-```bash
-docker compose up -d api
-```
-
-3. Ingest documents into ChromaDB:
-
-```bash
-docker compose exec api python scripts/ingest_knowledge.py --input-dir /app/knowledge --db-path /data/chroma --collection fraud_knowledge --reset
-```
-
-4. Verify by calling `POST /api/analyze`.
-  The endpoint will query the same collection configured by `CHROMA_COLLECTION_NAME`.
-
-Notes:
-
-- `--reset` clears old collection data first. Remove `--reset` to append/update.
-- The folder is mounted in Docker via `./knowledge:/app/knowledge:ro`.
 
 ## Ollama Integration Notes
 
