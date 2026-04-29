@@ -894,10 +894,10 @@ def extract_financial_variables(pdf_bytes: bytes) -> tuple[dict[str, float | Non
     provider = (AI_PROVIDER or "").strip().lower()
     if provider == "openrouter":
         raw_response, usage = _call_openrouter_vision(prompt, images_b64)
-    elif provider == "ollama":
+    elif provider in ("ollama", "local"):
         raw_response, usage = _call_ollama_vision(prompt, images_b64)
     else:
-        raise HTTPException(status_code=500, detail="AI_PROVIDER must be 'openrouter' or 'ollama'.")
+        raise HTTPException(status_code=500, detail="AI_PROVIDER must be 'openrouter', 'ollama', or 'local'.")
     try:
         extracted_payload = _extract_json_object(raw_response)
     except ValueError as exc:
@@ -1066,8 +1066,11 @@ def call_llm(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | None]:
     provider = (AI_PROVIDER or "").lower()
     if provider == "openrouter":
         narrative, model_provider, model_name, raw_response, usage = _call_openrouter(prompt)
-    else:
+    elif provider in ("ollama", "local"):
         narrative, model_provider, model_name, raw_response, usage = _call_ollama(prompt)
+    else:
+        fallback = f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
+        return fallback, provider, "", json.dumps({"error": "Unknown provider"}, ensure_ascii=True), None
     if _needs_indonesian_rewrite(narrative):
         rewritten_text, rewrite_raw = _rewrite_to_bahasa_indonesia(narrative, provider)
         if rewritten_text:
@@ -1163,14 +1166,14 @@ def _check_ai_connection(provider: str) -> str:
             headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
             resp = requests.get("https://openrouter.ai/api/v1/auth/key", headers=headers, timeout=3)
             return "ok" if resp.status_code == 200 else f"error (HTTP {resp.status_code})"
-        elif provider == "ollama":
+        elif provider in ("ollama", "local"):
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
             resp = requests.get(f"{base_url}/api/tags", timeout=3)
             return "ok" if resp.status_code == 200 else f"error (HTTP {resp.status_code})"
         else:
-            return "error (unknown provider)"
+            return f"error (unknown provider: {provider})"
     except Exception as exc:
-        return f"error ({type(exc).__name__})"
+        return f"error ({type(exc).__name__}: {exc})"
 
 @app.get("/health")
 def health() -> dict[str, Any]:
