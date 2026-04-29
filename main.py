@@ -1155,6 +1155,23 @@ def _call_openrouter(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | 
 # FastAPI routes
 # ---------------------------------------------------------------------------
 
+def _check_ai_connection(provider: str) -> str:
+    try:
+        if provider == "openrouter":
+            if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your-openrouter-api-key-here":
+                return "error (missing API key)"
+            headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+            resp = requests.get("https://openrouter.ai/api/v1/auth/key", headers=headers, timeout=3)
+            return "ok" if resp.status_code == 200 else f"error (HTTP {resp.status_code})"
+        elif provider == "ollama":
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            resp = requests.get(f"{base_url}/api/tags", timeout=3)
+            return "ok" if resp.status_code == 200 else f"error (HTTP {resp.status_code})"
+        else:
+            return "error (unknown provider)"
+    except Exception as exc:
+        return f"error ({type(exc).__name__})"
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     started_at = time.perf_counter()
@@ -1171,8 +1188,15 @@ def health() -> dict[str, Any]:
     except Exception:
         pass
 
+    provider = (AI_PROVIDER or "").strip().lower()
+    model_name = OPENROUTER_MODEL if provider == "openrouter" else OLLAMA_MODEL
+    ai_status = _check_ai_connection(provider)
+
     return {
         "status": "ok",
+        "ai_provider": provider,
+        "ai_model": model_name,
+        "ai_connection_status": ai_status,
         "chromadb_status": chroma_status,
         "knowledge_documents_count": doc_count,
         "responded_at": _iso_utc_now(),

@@ -8,10 +8,10 @@ services:
       - "8000:8000"
     environment:
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3-8b-instruct:free}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your-openrouter-api-key-here}
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: gemma4:26b
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
       CHROMA_DB_PATH: /data/chroma
       CHROMA_COLLECTION_NAME: fraud_knowledge
     volumes:
@@ -43,8 +43,8 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3-8b-instruct:free}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your-openrouter-api-key-here}
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: gemma4:26b
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
       CHROMA_DB_PATH: /data/chroma
       CHROMA_COLLECTION_NAME: fraud_knowledge
     volumes:
