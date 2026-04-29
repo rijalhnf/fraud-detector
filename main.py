@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
@@ -281,6 +281,16 @@ class AnalyzeResponse(BaseModel):
     llm_raw_response: str | None = None
     llm_usage: dict[str, Any] | None = None
     llm_estimated_cost_usd: float | None = None
+    responded_at: str
+    duration_ms: float
+
+
+class AnalyzeCalkResponse(BaseModel):
+    deep_analysis_insight: str
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_raw_response: str | None = None
+    llm_usage: dict[str, Any] | None = None
     responded_at: str
     duration_ms: float
 
@@ -1036,7 +1046,16 @@ Instructions:
 1) Explain what the M-Score value means for this company in plain but professional language.
 2) Identify which ratios exceed their red-flag thresholds and explain the forensic implication of each.
 3) Note any ratios where the mechanical result may be misleading (e.g. GMI when both margins are negative).
-4) Connect findings to the retrieved regulatory context (PSAK 115, OJK) where relevant.
+4) PSAK 115 / PSAK 72 Analysis — map each red-flag ratio to the relevant
+   revenue recognition step:
+     Step 1 (Identify contract)      → related to DSRI anomalies
+     Step 2 (Identify obligations)   → related to deferred revenue changes
+     Step 3 (Determine price)        → related to GMI / variable consideration
+     Step 4 (Allocate price)         → related to multi-element arrangements
+     Step 5 (Recognize revenue)      → related to DSRI, TATA
+   Only cite specific paragraphs if they appear in the retrieved RAG context.
+   If no RAG context is available, state the general principle without citing
+   specific article numbers to avoid hallucination.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
 6) Keep response under 250 words.
 7) Write the entire response in Bahasa Indonesia professional.
@@ -1137,9 +1156,28 @@ def _call_openrouter(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | 
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
-def health() -> dict[str, str | float]:
+def health() -> dict[str, Any]:
     started_at = time.perf_counter()
-    return {"status": "ok", "responded_at": _iso_utc_now(), "duration_ms": round((time.perf_counter() - started_at) * 1000, 3)}
+    chroma_status = "error"
+    doc_count = 0
+    try:
+        import chromadb
+        db_path = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+        collection_name = os.getenv("CHROMA_COLLECTION_NAME", "fraud_knowledge")
+        client = chromadb.PersistentClient(path=db_path)
+        collection = client.get_collection(name=collection_name)
+        doc_count = collection.count()
+        chroma_status = "ok"
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "chromadb_status": chroma_status,
+        "knowledge_documents_count": doc_count,
+        "responded_at": _iso_utc_now(),
+        "duration_ms": round((time.perf_counter() - started_at) * 1000, 3)
+    }
 
 
 @app.post("/api/upload", response_model=UploadResponse)
@@ -1204,6 +1242,81 @@ def analyze_validated_data(
         llm_estimated_cost_usd=llm_estimated_cost_usd,
         responded_at=_iso_utc_now(),
         duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
+    )
+
+
+@app.post("/api/analyze-calk", response_model=AnalyzeCalkResponse)
+async def analyze_calk(
+    file: UploadFile = File(...),
+    m_score: float = Form(...),
+    risk_status: str = Form(...),
+    ratios_json: str = Form(...),
+    extracted_variables_json: str = Form(default="{}"),
+) -> AnalyzeCalkResponse:
+    started_at = time.perf_counter()
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+
+    try:
+        import fitz  # type: ignore
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            text_content = ""
+            # Extract text from all pages since CaLK notes can be deep in the document
+            for page in doc:
+                text_content += page.get_text() + "\n"
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to extract text from CaLK PDF: {exc}")
+
+    # Truncate text to approx 400,000 characters (roughly 100k tokens) to fit in modern context windows safely
+    text_content = text_content[:400000]
+
+    # Retrieve RAG context (PSAK 115)
+    rag_query = f"Beneish M-Score {m_score:.4f}, risk {risk_status}, PSAK 115 OJK sanction"
+    rag_result = query_chromadb_context(rag_query)
+    rag_chunks = rag_result.get("chunks", [])
+    
+    context_lines = [
+        f"[{idx}] {chunk.get('content', '')}\nMetadata: {json.dumps(chunk.get('metadata', {}), ensure_ascii=True)}"
+        for idx, chunk in enumerate(rag_chunks, start=1)
+    ]
+
+    prompt = f"""
+You are a forensic accounting assistant. The user has provided the 'Catatan atas Laporan Keuangan' (CaLK) / Notes to Financial Statements to deepen the fraud analysis.
+
+Previous Beneish M-Score Results:
+- M-Score: {m_score}
+- Risk Status: {risk_status}
+- Ratios: {ratios_json}
+- Raw Financial Variables (Absolute Values): {extracted_variables_json}
+
+Retrieved Context (RAG from PSAK 115 / PSAK 72 and OJK sanction-related references):
+{chr(10).join(context_lines)}
+
+Excerpts from the uploaded CaLK document (truncated):
+{text_content}
+
+Instructions:
+1) Review the provided CaLK text specifically looking for justifications, anomalies, or disclosures that explain the high-risk ratios (e.g., related party transactions, unusual revenue recognition, changes in accounting estimates). Pay special attention to the raw financial variables provided.
+2) Explain how specific notes in the CaLK validate or mitigate the fraud risk signaled by the M-Score.
+3) Point out any suspicious transactions (like 'Mahata' or similar unusual entities) if mentioned in the text.
+4) PSAK 115 / PSAK 72 Analysis — relate your findings from the CaLK to the relevant revenue recognition steps based on the retrieved RAG context.
+5) Write the entire response in professional Bahasa Indonesia.
+""".strip()
+
+    llm_narrative, llm_provider, llm_model, llm_raw_response, llm_usage = call_llm(prompt)
+
+    return AnalyzeCalkResponse(
+        deep_analysis_insight=llm_narrative,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        llm_raw_response=llm_raw_response,
+        llm_usage=llm_usage,
+        responded_at=_iso_utc_now(),
+        duration_ms=round((time.perf_counter() - started_at) * 1000, 3)
     )
 
 

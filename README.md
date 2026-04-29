@@ -11,7 +11,7 @@ FastAPI backend for a two-step fraud analysis workflow:
 - AI vision OCR for short financial statement PDFs using the configured OpenRouter or Ollama model.
 - PDF pages are rendered with PyMuPDF and sent to the model for structured variable extraction.
 - Beneish 8-ratio calculation and final M-Score.
-- RAG retrieval from ChromaDB documents (PSAK 72 and OJK-related references).
+- RAG retrieval from ChromaDB documents (PSAK 115 / PSAK 72).
 - Local LLM narrative generation via Ollama or OpenRouter.
 - Dockerized deployment with a production profile.
 
