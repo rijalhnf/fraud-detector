@@ -874,7 +874,7 @@ def _call_ollama_vision(prompt: str, images_b64: list[str]) -> tuple[str, dict[s
         "stream": False,
         "options": {"temperature": 0.0, "num_ctx": 8192},
     }
-    response = requests.post(f"{base_url}/api/chat", json=payload, timeout=180)
+    response = requests.post(f"{base_url}/api/chat", json=payload, timeout=600)
     response.raise_for_status()
     data = response.json()
     usage = {
@@ -1111,7 +1111,7 @@ def _call_ollama(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | None
         "options": {"temperature": 0.2, "num_ctx": 4096},
     }
     try:
-        response = requests.post(f"{base_url}/api/generate", json=payload, timeout=120)
+        response = requests.post(f"{base_url}/api/generate", json=payload, timeout=600)
         response.raise_for_status()
         data = response.json()
         usage = {
