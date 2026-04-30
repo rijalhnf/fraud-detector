@@ -1080,31 +1080,17 @@ async def stream_llm_async(prompt: str, provider_override: str | None = None):
         yield "chunk", f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
 
 async def _stream_ollama_async(prompt: str):
-    """Yields (kind, text) tuples from Ollama streaming /api/generate.
-
-    Two modes depending on Ollama version:
-    - Ollama >= 0.7: set think=True → model emits a separate 'thinking' field
-      for reasoning tokens and 'response' for the final answer.
-    - Older Ollama / no think flag: reasoning is embedded inline in 'response'
-      as <think>...</think> tags. We detect and split those manually.
-    """
+    """Yields (kind, text) tuples from Ollama streaming /api/generate."""
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    # think=True is only valid for thinking-capable models (DeepSeek-R1, Qwen3, etc.).
-    # Sending it to standard models (Gemma, Llama, Mistral) breaks Ollama streaming.
-    # Detect thinking models by name; fall back to <think> tag parsing for all others.
-    is_thinking_model = any(
-        kw in (OLLAMA_MODEL or "").lower()
-        for kw in ("deepseek-r", "qwen3", "qwq", "r1", "thinking")
-    )
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": True,
-        **({"think": True} if is_thinking_model else {}),
-        "options": {"temperature": 0.2, "num_ctx": 4096},
+        "think": False,
+        "options": {"temperature": 0.3, "num_ctx": 4096},
     }
-    # State for <think> tag fallback parser
-    in_think_tag = False
+    in_think_tag = False  # fallback parser state for inline <think> tags
+
 
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
