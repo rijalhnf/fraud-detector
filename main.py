@@ -1339,7 +1339,15 @@ def analyze_validated_data(
         duration = round((time.perf_counter() - started_at) * 1000, 3)
         yield f"data: {json.dumps({'type': 'done', 'duration_ms': duration})}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.post("/api/analyze-calk", response_model=AnalyzeCalkResponse)
