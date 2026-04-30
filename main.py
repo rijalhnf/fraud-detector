@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -1348,6 +1348,60 @@ def analyze_validated_data(
             "X-Accel-Buffering": "no"
         }
     )
+
+@app.websocket("/api/ws/analyze")
+async def analyze_ws(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        data = await websocket.receive_json()
+        payload = FinancialVariables(**data)
+
+        started_at = time.perf_counter()
+
+        # Step A — Compute Beneish ratios + M-Score
+        ratios = calculate_beneish_ratios(payload)
+        m_score = calculate_m_score(ratios)
+        risk_status = classify_risk(m_score)
+
+        # Step B — Retrieve RAG context
+        rag_query = f"Beneish M-Score {m_score:.4f}, risk {risk_status}, PSAK 115 OJK sanction"
+        rag_result = query_chromadb_context(rag_query)
+        rag_chunks = rag_result.get("chunks", [])
+
+        # Step C — LLM narrative
+        prompt = build_llm_prompt(payload, ratios, m_score, risk_status, rag_chunks)
+        
+        # Yield metadata first
+        metadata = {
+            "type": "metadata",
+            "data": {
+                "ratios": {k: round(v, 6) for k, v in ratios.items()},
+                "m_score": round(m_score, 6),
+                "risk_status": risk_status,
+                "llm_provider": "ollama",
+                "llm_model": OLLAMA_MODEL or "",
+            }
+        }
+        await websocket.send_json(metadata)
+        
+        # Yield text chunks
+        try:
+            for chunk in stream_llm(prompt, provider_override="ollama"):
+                if chunk:
+                    await websocket.send_json({"type": "chunk", "text": chunk})
+        except Exception as e:
+            await websocket.send_json({"type": "error", "text": str(e)})
+            
+        duration = round((time.perf_counter() - started_at) * 1000, 3)
+        await websocket.send_json({"type": "done", "duration_ms": duration})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "text": str(e)})
+        except Exception:
+            pass
 
 
 @app.post("/api/analyze-calk", response_model=AnalyzeCalkResponse)
