@@ -1089,16 +1089,22 @@ async def _stream_ollama_async(prompt: str):
       as <think>...</think> tags. We detect and split those manually.
     """
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    # think=True is only valid for thinking-capable models (DeepSeek-R1, Qwen3, etc.).
+    # Sending it to standard models (Gemma, Llama, Mistral) breaks Ollama streaming.
+    # Detect thinking models by name; fall back to <think> tag parsing for all others.
+    is_thinking_model = any(
+        kw in (OLLAMA_MODEL or "").lower()
+        for kw in ("deepseek-r", "qwen3", "qwq", "r1", "thinking")
+    )
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": True,
-        "think": True,          # Required for Ollama >= 0.7 thinking field support
+        **({"think": True} if is_thinking_model else {}),
         "options": {"temperature": 0.2, "num_ctx": 4096},
     }
-    # State for fallback <think> tag parsing (older Ollama / no structured thinking)
+    # State for <think> tag fallback parser
     in_think_tag = False
-    think_buf = ""
 
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
