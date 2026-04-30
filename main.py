@@ -1066,17 +1066,25 @@ Instructions:
 
 
 async def stream_llm_async(prompt: str, provider_override: str | None = None):
+    """Async generator that yields (kind, text) tuples.
+    kind = 'thinking' for model reasoning tokens, 'chunk' for final response tokens.
+    """
     provider = (provider_override or AI_PROVIDER or "").lower()
     if provider == "openrouter":
-        async for chunk in _stream_openrouter_async(prompt):
-            yield chunk
+        async for kind, text in _stream_openrouter_async(prompt):
+            yield kind, text
     elif provider in ("ollama", "local"):
-        async for chunk in _stream_ollama_async(prompt):
-            yield chunk
+        async for kind, text in _stream_ollama_async(prompt):
+            yield kind, text
     else:
-        yield f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
+        yield "chunk", f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
 
 async def _stream_ollama_async(prompt: str):
+    """Yields (kind, text) tuples from Ollama streaming /api/generate.
+    Thinking models (DeepSeek-R1, Qwen3, etc.) emit a 'thinking' field during
+    the reasoning phase and an empty 'response' field. We forward both so the
+    browser can show thinking progress instead of a silent wait.
+    """
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     payload = {
         "model": OLLAMA_MODEL,
@@ -1089,15 +1097,25 @@ async def _stream_ollama_async(prompt: str):
             async with client.stream("POST", f"{base_url}/api/generate", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
-                    if line:
-                        data = json.loads(line)
-                        yield data.get("response", "")
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    thinking = data.get("thinking", "")
+                    response_text = data.get("response", "")
+                    if thinking:
+                        yield "thinking", thinking
+                    if response_text:
+                        yield "chunk", response_text
     except Exception as exc:
-        yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
+        yield "chunk", f" Layanan LLM tidak tersedia. Detail error: {exc}"
 
 async def _stream_openrouter_async(prompt: str):
+    """Yields (kind, text) tuples from OpenRouter streaming.
+    OpenRouter also supports reasoning tokens via 'delta.reasoning' for models
+    like DeepSeek-R1; we forward those as 'thinking' kind.
+    """
     if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your-openrouter-api-key-here":
-        yield "OpenRouter API key belum diatur."
+        yield "chunk", "OpenRouter API key belum diatur."
         return
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -1115,20 +1133,26 @@ async def _stream_openrouter_async(prompt: str):
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
-                    if line:
-                        text = line.strip()
-                        if text.startswith("data: "):
-                            text = text[6:]
-                        if text == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(text)
-                            if data.get("choices") and data["choices"][0].get("delta"):
-                                yield data["choices"][0]["delta"].get("content", "")
-                        except Exception:
-                            pass
+                    if not line:
+                        continue
+                    text = line.strip()
+                    if text.startswith("data: "):
+                        text = text[6:]
+                    if text == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(text)
+                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        reasoning = delta.get("reasoning", "") or delta.get("reasoning_content", "")
+                        content = delta.get("content", "")
+                        if reasoning:
+                            yield "thinking", reasoning
+                        if content:
+                            yield "chunk", content
+                    except Exception:
+                        pass
     except Exception as exc:
-        yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
+        yield "chunk", f" Layanan LLM tidak tersedia. Detail error: {exc}"
 
 def call_llm(prompt: str, provider_override: str | None = None) -> tuple[str, str, str, str, dict[str, Any] | None]:
     provider = (provider_override or AI_PROVIDER or "").lower()
@@ -1419,11 +1443,12 @@ async def analyze_ws(websocket: WebSocket):
 
         ping_task = asyncio.create_task(_keepalive())
 
-        # Yield text chunks
+        # Yield text chunks — stream_llm_async yields (kind, text) tuples
+        # kind='thinking' during model reasoning, kind='chunk' for final response
         try:
-            async for chunk in stream_llm_async(prompt):
-                if chunk:
-                    await websocket.send_json({"type": "chunk", "text": chunk})
+            async for kind, text in stream_llm_async(prompt):
+                if text:
+                    await websocket.send_json({"type": kind, "text": text})
         except Exception as e:
             await websocket.send_json({"type": "error", "text": str(e)})
         finally:
