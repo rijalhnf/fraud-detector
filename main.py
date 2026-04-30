@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+import httpx
+import asyncio
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -1063,16 +1065,18 @@ Instructions:
 """.strip()
 
 
-def stream_llm(prompt: str, provider_override: str | None = None):
+async def stream_llm_async(prompt: str, provider_override: str | None = None):
     provider = (provider_override or AI_PROVIDER or "").lower()
     if provider == "openrouter":
-        yield from _stream_openrouter(prompt)
+        async for chunk in _stream_openrouter_async(prompt):
+            yield chunk
     elif provider in ("ollama", "local"):
-        yield from _stream_ollama(prompt)
+        async for chunk in _stream_ollama_async(prompt):
+            yield chunk
     else:
         yield f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
 
-def _stream_ollama(prompt: str):
+async def _stream_ollama_async(prompt: str):
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     payload = {
         "model": OLLAMA_MODEL,
@@ -1081,16 +1085,17 @@ def _stream_ollama(prompt: str):
         "options": {"temperature": 0.2, "num_ctx": 4096},
     }
     try:
-        response = requests.post(f"{base_url}/api/generate", json=payload, stream=True, timeout=600)
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if line:
-                data = json.loads(line)
-                yield data.get("response", "")
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            async with client.stream("POST", f"{base_url}/api/generate", json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line:
+                        data = json.loads(line)
+                        yield data.get("response", "")
     except Exception as exc:
         yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
 
-def _stream_openrouter(prompt: str):
+async def _stream_openrouter_async(prompt: str):
     if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your-openrouter-api-key-here":
         yield "OpenRouter API key belum diatur."
         return
@@ -1106,21 +1111,22 @@ def _stream_openrouter(prompt: str):
         "stream": True,
     }
     try:
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if line:
-                text = line.decode('utf-8')
-                if text.startswith("data: "):
-                    text = text[6:]
-                if text.strip() == "[DONE]":
-                    break
-                try:
-                    data = json.loads(text)
-                    if data.get("choices") and data["choices"][0].get("delta"):
-                        yield data["choices"][0]["delta"].get("content", "")
-                except Exception:
-                    pass
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line:
+                        text = line.strip()
+                        if text.startswith("data: "):
+                            text = text[6:]
+                        if text == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(text)
+                            if data.get("choices") and data["choices"][0].get("delta"):
+                                yield data["choices"][0]["delta"].get("content", "")
+                        except Exception:
+                            pass
     except Exception as exc:
         yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
 
@@ -1357,19 +1363,26 @@ async def analyze_ws(websocket: WebSocket):
         payload = FinancialVariables(**data)
 
         started_at = time.perf_counter()
+        
+        await websocket.send_json({"type": "status", "message": "Computing Beneish M-Score..."})
 
         # Step A — Compute Beneish ratios + M-Score
         ratios = calculate_beneish_ratios(payload)
         m_score = calculate_m_score(ratios)
         risk_status = classify_risk(m_score)
 
+        await websocket.send_json({"type": "status", "message": "Retrieving RAG knowledge base..."})
+
         # Step B — Retrieve RAG context
+        # Run blocking chromadb query in a threadpool so it doesn't block the async event loop
         rag_query = f"Beneish M-Score {m_score:.4f}, risk {risk_status}, PSAK 115 OJK sanction"
-        rag_result = query_chromadb_context(rag_query)
+        rag_result = await asyncio.to_thread(query_chromadb_context, rag_query)
         rag_chunks = rag_result.get("chunks", [])
 
         # Step C — LLM narrative
         prompt = build_llm_prompt(payload, ratios, m_score, risk_status, rag_chunks)
+        
+        await websocket.send_json({"type": "status", "message": "Generating insight with AI..."})
         
         # Yield metadata first
         metadata = {
@@ -1386,7 +1399,7 @@ async def analyze_ws(websocket: WebSocket):
         
         # Yield text chunks
         try:
-            for chunk in stream_llm(prompt, provider_override="ollama"):
+            async for chunk in stream_llm_async(prompt, provider_override="ollama"):
                 if chunk:
                     await websocket.send_json({"type": "chunk", "text": chunk})
         except Exception as e:
