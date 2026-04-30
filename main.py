@@ -1363,7 +1363,7 @@ async def analyze_ws(websocket: WebSocket):
         payload = FinancialVariables(**data)
 
         started_at = time.perf_counter()
-        
+
         await websocket.send_json({"type": "status", "message": "Computing Beneish M-Score..."})
 
         # Step A — Compute Beneish ratios + M-Score
@@ -1381,9 +1381,13 @@ async def analyze_ws(websocket: WebSocket):
 
         # Step C — LLM narrative
         prompt = build_llm_prompt(payload, ratios, m_score, risk_status, rag_chunks)
-        
+
         await websocket.send_json({"type": "status", "message": "Generating insight with AI..."})
-        
+
+        # Detect configured provider (do not hardcode to ollama)
+        provider = (AI_PROVIDER or "").strip().lower()
+        llm_model = OPENROUTER_MODEL if provider == "openrouter" else (OLLAMA_MODEL or "")
+
         # Yield metadata first
         metadata = {
             "type": "metadata",
@@ -1391,20 +1395,45 @@ async def analyze_ws(websocket: WebSocket):
                 "ratios": {k: round(v, 6) for k, v in ratios.items()},
                 "m_score": round(m_score, 6),
                 "risk_status": risk_status,
-                "llm_provider": "ollama",
-                "llm_model": OLLAMA_MODEL or "",
-            }
+                "llm_provider": provider,
+                "llm_model": llm_model,
+            },
         }
         await websocket.send_json(metadata)
-        
+
+        # --- Keepalive ping task ---
+        # Reverse proxies (nginx, Cloudflare, etc.) drop idle WebSocket connections
+        # after ~60 s. We send a "ping" frame every 20 s while the LLM is streaming
+        # so the proxy sees traffic and keeps the connection alive.
+        stop_ping = asyncio.Event()
+
+        async def _keepalive():
+            while not stop_ping.is_set():
+                try:
+                    await asyncio.wait_for(asyncio.shield(stop_ping.wait()), timeout=20.0)
+                except asyncio.TimeoutError:
+                    try:
+                        await websocket.send_json({"type": "ping"})
+                    except Exception:
+                        break
+
+        ping_task = asyncio.create_task(_keepalive())
+
         # Yield text chunks
         try:
-            async for chunk in stream_llm_async(prompt, provider_override="ollama"):
+            async for chunk in stream_llm_async(prompt):
                 if chunk:
                     await websocket.send_json({"type": "chunk", "text": chunk})
         except Exception as e:
             await websocket.send_json({"type": "error", "text": str(e)})
-            
+        finally:
+            stop_ping.set()
+            ping_task.cancel()
+            try:
+                await ping_task
+            except asyncio.CancelledError:
+                pass
+
         duration = round((time.perf_counter() - started_at) * 1000, 3)
         await websocket.send_json({"type": "done", "duration_ms": duration})
 
