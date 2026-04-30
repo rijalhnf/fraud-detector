@@ -89,6 +89,16 @@ When it finishes, the terminal will output the number of chunks added to the dat
 **Step 5: Test the API**
 Verify the backend is running by opening `http://localhost:8000/health` in your browser.
 
+### Changing ENV
+
+If you change the values in your `.env` file (like switching from `local` to `openrouter`), you only need to recreate the containers so they pick up the new environment variables. You **do not** need to rebuild the image unless you change the `Dockerfile` or `requirements.txt`.
+
+Run this command to apply `.env` changes:
+```bash
+docker compose up -d --force-recreate
+```
+*(Alternatively, you can run `docker compose down` followed by `docker compose up -d`)*
+
 ### Stop services
 
 ```bash

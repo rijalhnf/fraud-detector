@@ -11,6 +11,7 @@ from typing import Any
 import requests
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
@@ -1062,8 +1063,69 @@ Instructions:
 """.strip()
 
 
-def call_llm(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | None]:
-    provider = (AI_PROVIDER or "").lower()
+def stream_llm(prompt: str, provider_override: str | None = None):
+    provider = (provider_override or AI_PROVIDER or "").lower()
+    if provider == "openrouter":
+        yield from _stream_openrouter(prompt)
+    elif provider in ("ollama", "local"):
+        yield from _stream_ollama(prompt)
+    else:
+        yield f"Layanan LLM tidak tersedia. AI_PROVIDER '{provider}' tidak didukung."
+
+def _stream_ollama(prompt: str):
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": True,
+        "options": {"temperature": 0.2, "num_ctx": 4096},
+    }
+    try:
+        response = requests.post(f"{base_url}/api/generate", json=payload, stream=True, timeout=600)
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if line:
+                data = json.loads(line)
+                yield data.get("response", "")
+    except Exception as exc:
+        yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
+
+def _stream_openrouter(prompt: str):
+    if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your-openrouter-api-key-here":
+        yield "OpenRouter API key belum diatur."
+        return
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": "Selalu jawab dalam Bahasa Indonesia profesional."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+        "stream": True,
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=120)
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if line:
+                text = line.decode('utf-8')
+                if text.startswith("data: "):
+                    text = text[6:]
+                if text.strip() == "[DONE]":
+                    break
+                try:
+                    data = json.loads(text)
+                    if data.get("choices") and data["choices"][0].get("delta"):
+                        yield data["choices"][0]["delta"].get("content", "")
+                except Exception:
+                    pass
+    except Exception as exc:
+        yield f" Layanan LLM tidak tersedia. Detail error: {exc}"
+
+def call_llm(prompt: str, provider_override: str | None = None) -> tuple[str, str, str, str, dict[str, Any] | None]:
+    provider = (provider_override or AI_PROVIDER or "").lower()
     if provider == "openrouter":
         narrative, model_provider, model_name, raw_response, usage = _call_openrouter(prompt)
     elif provider in ("ollama", "local"):
@@ -1236,10 +1298,10 @@ async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
-@app.post("/api/analyze", response_model=AnalyzeResponse)
+@app.post("/api/analyze")
 def analyze_validated_data(
     payload: FinancialVariables = Body(...),
-) -> AnalyzeResponse:
+):
     started_at = time.perf_counter()
 
     # Step A — Compute Beneish ratios + M-Score
@@ -1254,22 +1316,30 @@ def analyze_validated_data(
 
     # Step C — LLM narrative
     prompt = build_llm_prompt(payload, ratios, m_score, risk_status, rag_chunks)
-    llm_narrative, llm_provider, llm_model, llm_raw_response, llm_usage = call_llm(prompt)
-    llm_estimated_cost_usd = _to_float_or_none(llm_usage.get("estimated_cost_usd")) if isinstance(llm_usage, dict) else None
+    
+    def event_generator():
+        # Yield metadata first
+        metadata = {
+            "ratios": {k: round(v, 6) for k, v in ratios.items()},
+            "m_score": round(m_score, 6),
+            "risk_status": risk_status,
+            "llm_provider": "ollama",
+            "llm_model": OLLAMA_MODEL or "",
+        }
+        yield f"data: {json.dumps({'type': 'metadata', 'data': metadata})}\n\n"
+        
+        # Yield text chunks
+        try:
+            for chunk in stream_llm(prompt, provider_override="ollama"):
+                if chunk:
+                    yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+            
+        duration = round((time.perf_counter() - started_at) * 1000, 3)
+        yield f"data: {json.dumps({'type': 'done', 'duration_ms': duration})}\n\n"
 
-    return AnalyzeResponse(
-        ratios={k: round(v, 6) for k, v in ratios.items()},
-        m_score=round(m_score, 6),
-        risk_status=risk_status,
-        llm_narrative_insight=llm_narrative,
-        llm_provider=llm_provider,
-        llm_model=llm_model,
-        llm_raw_response=llm_raw_response,
-        llm_usage=llm_usage,
-        llm_estimated_cost_usd=llm_estimated_cost_usd,
-        responded_at=_iso_utc_now(),
-        duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
-    )
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/analyze-calk", response_model=AnalyzeCalkResponse)
@@ -1334,7 +1404,7 @@ Instructions:
 5) Write the entire response in professional Bahasa Indonesia.
 """.strip()
 
-    llm_narrative, llm_provider, llm_model, llm_raw_response, llm_usage = call_llm(prompt)
+    llm_narrative, llm_provider, llm_model, llm_raw_response, llm_usage = call_llm(prompt, provider_override="openrouter")
 
     return AnalyzeCalkResponse(
         deep_analysis_insight=llm_narrative,
