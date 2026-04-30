@@ -1087,7 +1087,7 @@ async def _stream_ollama_async(prompt: str):
         "prompt": prompt,
         "stream": True,
         "think": False,
-        "options": {"temperature": 0.3, "num_ctx": 4096},
+        "options": {"temperature": 0.3, "num_ctx": 8192},
     }
     in_think_tag = False  # fallback parser state for inline <think> tags
 
