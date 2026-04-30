@@ -1081,17 +1081,25 @@ async def stream_llm_async(prompt: str, provider_override: str | None = None):
 
 async def _stream_ollama_async(prompt: str):
     """Yields (kind, text) tuples from Ollama streaming /api/generate.
-    Thinking models (DeepSeek-R1, Qwen3, etc.) emit a 'thinking' field during
-    the reasoning phase and an empty 'response' field. We forward both so the
-    browser can show thinking progress instead of a silent wait.
+
+    Two modes depending on Ollama version:
+    - Ollama >= 0.7: set think=True → model emits a separate 'thinking' field
+      for reasoning tokens and 'response' for the final answer.
+    - Older Ollama / no think flag: reasoning is embedded inline in 'response'
+      as <think>...</think> tags. We detect and split those manually.
     """
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": True,
+        "think": True,          # Required for Ollama >= 0.7 thinking field support
         "options": {"temperature": 0.2, "num_ctx": 4096},
     }
+    # State for fallback <think> tag parsing (older Ollama / no structured thinking)
+    in_think_tag = False
+    think_buf = ""
+
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
             async with client.stream("POST", f"{base_url}/api/generate", json=payload) as response:
@@ -1100,14 +1108,45 @@ async def _stream_ollama_async(prompt: str):
                     if not line:
                         continue
                     data = json.loads(line)
+
+                    # --- Structured thinking field (Ollama >= 0.7 with think=True) ---
                     thinking = data.get("thinking", "")
                     response_text = data.get("response", "")
+
                     if thinking:
                         yield "thinking", thinking
-                    if response_text:
-                        yield "chunk", response_text
+                        continue  # structured path: skip inline parsing
+
+                    if not response_text:
+                        continue
+
+                    # --- Fallback: parse <think>...</think> inline in response tokens ---
+                    # Accumulate token into buffer and scan for open/close tags
+                    buf = response_text
+                    while buf:
+                        if in_think_tag:
+                            end = buf.find("</think>")
+                            if end == -1:
+                                yield "thinking", buf
+                                buf = ""
+                            else:
+                                if end > 0:
+                                    yield "thinking", buf[:end]
+                                in_think_tag = False
+                                buf = buf[end + len("</think>"):]
+                        else:
+                            start = buf.find("<think>")
+                            if start == -1:
+                                yield "chunk", buf
+                                buf = ""
+                            else:
+                                if start > 0:
+                                    yield "chunk", buf[:start]
+                                in_think_tag = True
+                                buf = buf[start + len("<think>"):]
     except Exception as exc:
         yield "chunk", f" Layanan LLM tidak tersedia. Detail error: {exc}"
+
 
 async def _stream_openrouter_async(prompt: str):
     """Yields (kind, text) tuples from OpenRouter streaming.
