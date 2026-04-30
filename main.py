@@ -1105,6 +1105,15 @@ async def _stream_ollama_async(prompt: str):
                     thinking = data.get("thinking", "")
                     response_text = data.get("response", "")
 
+                    if data.get("done"):
+                        usage = {
+                            "prompt_tokens": data.get("prompt_eval_count", 0),
+                            "completion_tokens": data.get("eval_count", 0),
+                            "total_tokens": data.get("prompt_eval_count", 0) + data.get("eval_count", 0),
+                            "estimated_cost_usd": None
+                        }
+                        yield "usage", usage
+
                     if thinking:
                         yield "thinking", thinking
                         continue  # structured path: skip inline parsing
@@ -1158,6 +1167,7 @@ async def _stream_openrouter_async(prompt: str):
         ],
         "temperature": 0.2,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1173,13 +1183,26 @@ async def _stream_openrouter_async(prompt: str):
                         break
                     try:
                         data = json.loads(text)
-                        delta = data.get("choices", [{}])[0].get("delta", {})
-                        reasoning = delta.get("reasoning", "") or delta.get("reasoning_content", "")
-                        content = delta.get("content", "")
-                        if reasoning:
-                            yield "thinking", reasoning
-                        if content:
-                            yield "chunk", content
+                        
+                        if "usage" in data and data["usage"]:
+                            cost_usd = _extract_openrouter_cost_usd(data)
+                            usage_dict = {
+                                "prompt_tokens": data["usage"].get("prompt_tokens", 0),
+                                "completion_tokens": data["usage"].get("completion_tokens", 0),
+                                "total_tokens": data["usage"].get("total_tokens", 0),
+                                "estimated_cost_usd": cost_usd
+                            }
+                            yield "usage", usage_dict
+
+                        choices = data.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            reasoning = delta.get("reasoning", "") or delta.get("reasoning_content", "")
+                            content = delta.get("content", "")
+                            if reasoning:
+                                yield "thinking", reasoning
+                            if content:
+                                yield "chunk", content
                     except Exception:
                         pass
     except Exception as exc:
@@ -1437,11 +1460,11 @@ async def analyze_ws(websocket: WebSocket):
         # Step C — LLM narrative
         prompt = build_llm_prompt(payload, ratios, m_score, risk_status, rag_chunks)
 
-        await websocket.send_json({"type": "status", "message": "Generating insight with AI..."})
+        await websocket.send_json({"type": "status", "message": "Generating insight..."})
 
-        # Detect configured provider (do not hardcode to ollama)
-        provider = (AI_PROVIDER or "").strip().lower()
-        llm_model = OPENROUTER_MODEL if provider == "openrouter" else (OLLAMA_MODEL or "")
+        # The /analyze endpoint is forced to 'ollama' in this specific flow.
+        provider = "ollama"
+        llm_model = OLLAMA_MODEL or ""
 
         # Yield metadata first
         metadata = {
@@ -1475,11 +1498,14 @@ async def analyze_ws(websocket: WebSocket):
         ping_task = asyncio.create_task(_keepalive())
 
         # Yield text chunks — stream_llm_async yields (kind, text) tuples
-        # kind='thinking' during model reasoning, kind='chunk' for final response
+        # kind='thinking' during model reasoning, kind='chunk' for final response, kind='usage' for stats
+        llm_usage = None
         try:
-            async for kind, text in stream_llm_async(prompt):
-                if text:
-                    await websocket.send_json({"type": kind, "text": text})
+            async for kind, content in stream_llm_async(prompt):
+                if kind == "usage":
+                    llm_usage = content
+                elif content:
+                    await websocket.send_json({"type": kind, "text": content})
         except Exception as e:
             await websocket.send_json({"type": "error", "text": str(e)})
         finally:
@@ -1491,7 +1517,7 @@ async def analyze_ws(websocket: WebSocket):
                 pass
 
         duration = round((time.perf_counter() - started_at) * 1000, 3)
-        await websocket.send_json({"type": "done", "duration_ms": duration})
+        await websocket.send_json({"type": "done", "duration_ms": duration, "usage": llm_usage})
 
     except WebSocketDisconnect:
         pass
