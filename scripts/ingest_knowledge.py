@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 import chromadb
+import chromadb.utils.embedding_functions as embedding_functions
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
@@ -128,7 +129,15 @@ def main() -> None:
         except Exception:
             pass
 
-    collection = client.get_or_create_collection(name=args.collection)
+    ollama_ef = embedding_functions.OllamaEmbeddingFunction(
+        url="http://127.0.0.1:11434/api/embeddings",
+        model_name="nomic-embed-text",
+    )
+
+    collection = client.get_or_create_collection(
+        name=args.collection, 
+        embedding_function=ollama_ef
+    )
 
     all_ids: list[str] = []
     all_docs: list[str] = []

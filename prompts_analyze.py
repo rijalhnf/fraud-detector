@@ -75,7 +75,7 @@ Instructions:
    If no RAG context is available, state the general principle without citing
    specific article numbers to avoid hallucination.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
-6) Provide a concise yet thorough forensic analysis. Limit your response to 3 to 4 well-structured paragraphs (around 300-400 words).
+6) Provide a concise yet thorough forensic analysis.
 7) Write the entire response in Bahasa Indonesia professional.
 """.strip()
 

@@ -501,8 +501,19 @@ def query_chromadb_context(
     collection_name = collection_name or os.getenv("CHROMA_COLLECTION_NAME", "fraud_knowledge")
     try:
         import chromadb  # type: ignore
+        import chromadb.utils.embedding_functions as embedding_functions
+
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        ollama_ef = embedding_functions.OllamaEmbeddingFunction(
+            url=f"{ollama_url}/api/embeddings",
+            model_name="nomic-embed-text",
+        )
+
         client = chromadb.PersistentClient(path=db_path)
-        collection = client.get_or_create_collection(name=collection_name)
+        collection = client.get_or_create_collection(
+            name=collection_name, 
+            embedding_function=ollama_ef
+        )
         results = collection.query(
             query_texts=[query_text],
             n_results=top_k,
