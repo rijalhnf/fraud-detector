@@ -45,6 +45,10 @@ def build_llm_prompt(
 You are a forensic accounting assistant for an AI Fraud Early Warning System.
 Analyze the company's fraud risk using Beneish M-Score results and regulatory/accounting context.
 
+CORE PSAK 115 PRINCIPLES (Always apply these to your analysis):
+Revenue must be recognized when the entity transfers control of goods/services to the customer, following the 5-Step Model: (1) Identify the contract, (2) Identify performance obligations, (3) Determine transaction price, (4) Allocate price, (5) Recognize revenue. 
+Forensic Note: Fraud typically occurs by accelerating Step 5 (e.g., fictitious sales -> high DSRI), ignoring Step 2 (bundling -> distorted margins), or overestimating Step 3 (ignoring discounts/returns).
+
 Company: {company}
 Fiscal Year: {year}
 
@@ -75,7 +79,7 @@ Instructions:
    If no RAG context is available, state the general principle without citing
    specific article numbers to avoid hallucination.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
-6) Provide a concise yet thorough forensic analysis.
+6) Provide a concise yet thorough forensic analysis but keep response under 700 tokens.
 7) Write the entire response in Bahasa Indonesia professional.
 """.strip()
 
