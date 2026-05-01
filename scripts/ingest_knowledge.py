@@ -166,7 +166,17 @@ def main() -> None:
     if not all_docs:
         raise SystemExit("No text chunks extracted from input files.")
 
-    collection.upsert(ids=all_ids, documents=all_docs, metadatas=all_meta)
+    # Batch upsert to prevent httpx timeout with Ollama on CPU
+    batch_size = 10
+    for i in range(0, len(all_docs), batch_size):
+        end = i + batch_size
+        print(f"Upserting batch {i//batch_size + 1} (chunks {i} to {end-1})...")
+        collection.upsert(
+            ids=all_ids[i:end],
+            documents=all_docs[i:end],
+            metadatas=all_meta[i:end]
+        )
+
     print(f"Ingested {len(all_docs)} chunks from {len(files)} files into '{args.collection}'.")
 
 
