@@ -965,56 +965,30 @@ def build_llm_prompt(
     rag_chunks: list[dict[str, Any]],
 ) -> str:
     benchmark_reference = {
-        "DSRI": {
-            "non_manipulator_mean": 1.031,
-            "red_flag_threshold": 1.465,
-            "insight": "Indikasi channel stuffing atau pengakuan pendapatan terlalu dini.",
-            "note": "Dihitung dari piutang usaha (trade receivables) saja, bukan piutang lain-lain.",
-        },
-        "GMI": {
-            "non_manipulator_mean": 1.014,
-            "red_flag_threshold": 1.193,
-            "insight": "Margin memburuk dapat mendorong manajemen menyamarkan kerugian.",
-            "note": "Jika kedua margin negatif (perusahaan rugi), GMI < 1 secara mekanis namun margin ekonomis sebenarnya memburuk — analisis tren absolut margin diperlukan.",
-        },
-        "AQI": {
-            "non_manipulator_mean": 1.039,
-            "red_flag_threshold": 1.254,
-            "insight": "Kualitas aset menurun akibat deferral atau kapitalisasi biaya agresif.",
-        },
-        "SGI": {
-            "non_manipulator_mean": 1.134,
-            "red_flag_threshold": 1.607,
-            "insight": "Pertumbuhan tinggi meningkatkan tekanan untuk mempertahankan ekspektasi pasar.",
-        },
-        "DEPI": {
-            "non_manipulator_mean": 1.001,
-            "red_flag_threshold": 1.077,
-            "insight": "Perlambatan penyusutan dapat menaikkan laba secara artifisial (perpanjangan umur aset).",
-            "note": "Menggunakan beban penyusutan aktual dari Catatan Laporan Keuangan, bukan delta akumulasi penyusutan.",
-        },
-        "SGAI": {
-            "non_manipulator_mean": 1.054,
-            "red_flag_threshold": 1.041,
-            "insight": "Efisiensi beban SG&A melemah terhadap pendapatan.",
-            "note": "Dihitung dari full SG&A = beban administrasi + beban penjualan, sesuai Beneish (1999).",
-        },
-        "LVGI": {
-            "non_manipulator_mean": 1.037,
-            "red_flag_threshold": 1.111,
-            "insight": "Leverage naik meningkatkan risiko manipulasi untuk memenuhi covenant utang.",
-            "note": "Menggunakan utang berbunga (liabilitas jangka pendek + utang jangka panjang berbunga), bukan total liabilitas.",
-        },
-        "TATA": {
-            "non_manipulator_mean": 0.018,
-            "red_flag_threshold": 0.031,
-            "insight": "Akrual tinggi relatif terhadap arus kas mengindikasikan kualitas laba rendah.",
-            "note": "Metode income statement: (Laba Usaha - Arus Kas Operasi) / Total Aset.",
-        },
+        "DSRI": {"threshold": 1.465, "insight": "Indikasi channel stuffing atau pengakuan pendapatan terlalu dini.", "note": "Dihitung dari piutang usaha (trade receivables) saja."},
+        "GMI": {"threshold": 1.193, "insight": "Margin memburuk dapat mendorong manajemen menyamarkan kerugian.", "note": "Jika kedua margin negatif (perusahaan rugi), GMI < 1 secara mekanis namun margin ekonomis memburuk."},
+        "AQI": {"threshold": 1.254, "insight": "Kualitas aset menurun akibat deferral atau kapitalisasi biaya agresif."},
+        "SGI": {"threshold": 1.607, "insight": "Pertumbuhan tinggi meningkatkan tekanan untuk mempertahankan ekspektasi pasar."},
+        "DEPI": {"threshold": 1.077, "insight": "Perlambatan penyusutan dapat menaikkan laba secara artifisial (perpanjangan umur aset).", "note": "Menggunakan beban penyusutan aktual dari CLK."},
+        "SGAI": {"threshold": 1.041, "insight": "Efisiensi beban SG&A melemah terhadap pendapatan.", "note": "Dihitung dari full SG&A = beban administrasi + beban penjualan."},
+        "LVGI": {"threshold": 1.111, "insight": "Leverage naik meningkatkan risiko manipulasi untuk memenuhi covenant utang.", "note": "Menggunakan utang berbunga saja."},
+        "TATA": {"threshold": 0.031, "insight": "Akrual tinggi relatif terhadap arus kas mengindikasikan kualitas laba rendah.", "note": "Metode income statement: (Laba Usaha - Arus Kas Operasi) / Total Aset."},
     }
 
+    triggered_flags = {}
+    for r_name, r_val in ratios.items():
+        ref = benchmark_reference.get(r_name)
+        if ref and r_val > ref["threshold"]:
+            triggered_flags[r_name] = {
+                "value": round(r_val, 4),
+                "threshold": ref["threshold"],
+                "insight": ref["insight"],
+                "note": ref.get("note", "")
+            }
+
+    # Only include the actual text content to save tokens (no metadata JSON dump)
     context_lines = [
-        f"[{idx}] {chunk.get('content', '')}\nMetadata: {json.dumps(chunk.get('metadata', {}), ensure_ascii=True)}"
+        f"[{idx}] {chunk.get('content', '').strip()}"
         for idx, chunk in enumerate(rag_chunks, start=1)
     ]
 
@@ -1028,37 +1002,20 @@ Analyze the company's fraud risk using Beneish M-Score results and regulatory/ac
 Company: {company}
 Fiscal Year: {year}
 
-Calculated Beneish Ratios (8-variable model, Beneish 1999):
-{json.dumps(ratios, indent=2)}
-
 Final M-Score: {m_score:.4f}
-Risk Status: {risk_status}
+Risk Status: {risk_status} (Threshold: > -1.78 High Risk, > -2.22 Medium Risk)
 
-Threshold reference:
-  > -1.78  : High Risk (Beneish 1999 original)
-  > -2.22  : Medium Risk / Gray Zone (conservative threshold)
-  <= -2.22 : Low Risk
+Triggered Red Flags (Exceeded Thresholds):
+{json.dumps(triggered_flags, indent=2) if triggered_flags else "None. All ratios are within safe limits."}
 
-Retrieved Context (RAG from PSAK 115, before it's named PSAK 72 mandatory changed per 1 January 2024, and OJK sanction-related references):
-{chr(10).join(context_lines)}
-
-Beneish Benchmark Reference (per ratio red flags and methodology notes):
-{json.dumps(benchmark_reference, ensure_ascii=True, indent=2)}
+Retrieved Context (RAG from PSAK 115/72):
+{chr(10).join(context_lines) if context_lines else "No specific regulatory context retrieved."}
 
 Instructions:
 1) Explain what the M-Score value means for this company in plain but professional language.
-2) Identify which ratios exceed their red-flag thresholds and explain the forensic implication of each.
-3) Note any ratios where the mechanical result may be misleading (e.g. GMI when both margins are negative).
-4) PSAK 115 / PSAK 72 Analysis — map each red-flag ratio to the relevant
-   revenue recognition step:
-     Step 1 (Identify contract)      → related to DSRI anomalies
-     Step 2 (Identify obligations)   → related to deferred revenue changes
-     Step 3 (Determine price)        → related to GMI / variable consideration
-     Step 4 (Allocate price)         → related to multi-element arrangements
-     Step 5 (Recognize revenue)      → related to DSRI, TATA
-   Only cite specific paragraphs if they appear in the retrieved RAG context.
-   If no RAG context is available, state the general principle without citing
-   specific article numbers to avoid hallucination.
+2) For the Triggered Red Flags listed above, explain the forensic implication of each. If none triggered, state that the profile is normal.
+3) Note any ratios where the mechanical result may be misleading (e.g., GMI when both margins are negative).
+4) PSAK 115 / PSAK 72 Analysis — relate the triggered flags to revenue recognition steps (e.g., DSRI/TATA to Step 5, GMI to Step 3). Only cite specific paragraphs if they appear in the Retrieved Context. Do not hallucinate articles.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
 6) Keep response under 250 words.
 7) Write the entire response in Bahasa Indonesia professional.
