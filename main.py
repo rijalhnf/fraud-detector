@@ -443,7 +443,8 @@ def _call_ollama_vision(prompt: str, images_b64: list[str]) -> tuple[str, dict[s
         "model": OLLAMA_MODEL,
         "messages": [{"role": "user", "content": prompt, "images": images_b64}],
         "stream": False,
-        "options": {"temperature": 0.0, "num_ctx": 8192},
+        "keep_alive": -1,
+        "options": {"temperature": 0.0, "num_ctx": 6144},
     }
     response = requests.post(f"{base_url}/api/chat", json=payload, timeout=600)
     response.raise_for_status()
@@ -562,7 +563,7 @@ async def _stream_ollama_async(prompt: str):
         "prompt": prompt,
         "stream": True,
         "think": False,
-        "options": {"temperature": 0.3, "top_p": 0.95, "top_k": 64, "num_ctx": 4096},
+        "options": {"temperature": 0.3, "top_p": 0.95, "top_k": 64, "num_ctx": 6144},
     }
     in_think_tag = False  # fallback parser state for inline <think> tags
 
@@ -729,7 +730,7 @@ def _call_ollama(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | None
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.2, "top_p": 0.95, "top_k": 64, "num_ctx": 4096},
+        "options": {"temperature": 0.2, "top_p": 0.95, "top_k": 64, "num_ctx": 6144},
     }
     try:
         response = requests.post(f"{base_url}/api/generate", json=payload, timeout=600)

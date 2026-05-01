@@ -80,7 +80,8 @@ Instructions:
    specific article numbers to avoid hallucination.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
 6) Provide a concise yet thorough forensic analysis but keep response under 700 tokens.
-7) Write the entire response in Bahasa Indonesia professional.
+7) IMPORTANT: Do NOT use the words "RAG", "Konteks", or use citation brackets like [1]. Speak naturally as an expert auditor applying the standards.
+8) Write the entire response in Bahasa Indonesia professional.
 """.strip()
 
 
@@ -118,5 +119,6 @@ Instructions:
 2) Explain how specific notes in the CaLK validate or mitigate the fraud risk signaled by the M-Score.
 3) Point out any suspicious transactions (like 'Mahata' or similar unusual entities) if mentioned in the text.
 4) PSAK 115 / PSAK 72 Analysis — relate your findings from the CaLK to the relevant revenue recognition steps based on the retrieved RAG context.
-5) Write the entire response in professional Bahasa Indonesia.
+5) IMPORTANT: Do NOT use the words "RAG", "Konteks", or use citation brackets like [1]. Speak naturally as an expert auditor applying the standards.
+6) Write the entire response in professional Bahasa Indonesia.
 """.strip()
