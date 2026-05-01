@@ -928,7 +928,7 @@ def query_chromadb_context(
     query_text: str,
     db_path: str | None = None,
     collection_name: str | None = None,
-    top_k: int = 2,
+    top_k: int = 3,
 ) -> dict[str, Any]:
     db_path = db_path or os.getenv("CHROMA_DB_PATH", "./chroma_db")
     collection_name = collection_name or os.getenv("CHROMA_COLLECTION_NAME", "fraud_knowledge")
@@ -1001,6 +1001,9 @@ Analyze the company's fraud risk using Beneish M-Score results and regulatory/ac
 
 Company: {company}
 Fiscal Year: {year}
+
+All Calculated Ratios:
+{json.dumps({k: round(v, 4) for k, v in ratios.items()}, indent=2)}
 
 Final M-Score: {m_score:.4f}
 Risk Status: {risk_status} (Threshold: > -1.78 High Risk, > -2.22 Medium Risk)
