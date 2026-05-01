@@ -495,7 +495,7 @@ def query_chromadb_context(
     query_text: str,
     db_path: str | None = None,
     collection_name: str | None = None,
-    top_k: int = 3,
+    top_k: int = 5,
 ) -> dict[str, Any]:
     db_path = db_path or os.getenv("CHROMA_DB_PATH", "./chroma_db")
     collection_name = collection_name or os.getenv("CHROMA_COLLECTION_NAME", "fraud_knowledge")
