@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 
+llm_queue_lock = asyncio.Lock()
+
 from prompts_analyze import build_llm_prompt, build_calk_prompt
 from prompts_ocr import build_ocr_prompt
 from models import UploadResponse, FinancialVariables, AnalyzeResponse, AnalyzeCalkResponse
@@ -933,52 +935,69 @@ async def analyze_ws(websocket: WebSocket):
     # Step C — LLM narrative
         prompt = build_llm_prompt(payload.company_name, payload.fiscal_year, ratios, m_score, risk_status, rag_chunks)
 
-        await websocket.send_json({"type": "status", "message": "Generating insight..."})
-
-        # The /analyze endpoint is forced to 'ollama' in this specific flow.
-        provider = "ollama"
-        llm_model = OLLAMA_MODEL or ""
-
-        # Yield metadata first
-        metadata = {
-            "type": "metadata",
-            "data": {
-                "ratios": {k: round(v, 6) for k, v in ratios.items()},
-                "m_score": round(m_score, 6),
-                "risk_status": risk_status,
-                "llm_provider": provider,
-                "llm_model": llm_model,
-            },
-        }
-        await websocket.send_json(metadata)
-
         # --- Keepalive ping task ---
-        # Reverse proxies (nginx, Cloudflare, etc.) drop idle WebSocket connections
-        # after ~60 s. We send a "ping" frame every 20 s while the LLM is streaming
-        # so the proxy sees traffic and keeps the connection alive.
+        # Starts BEFORE the lock so the user gets pings while waiting in the queue!
         stop_ping = asyncio.Event()
+        is_generating = False
 
         async def _keepalive():
+            cool_messages = [
+                "Processing financial variables...",
+                "Cross-referencing Beneish Ratios with PSAK 115...",
+                "Analyzing Step 5 Revenue Recognition anomalies...",
+                "Evaluating Beneish M-Score red flags...",
+                "Synthesizing forensic accounting narrative...",
+                "AI is thinking in progress...",
+                "Just a moment, the AI is still processing...",
+            ]
+            idx = 0
             while not stop_ping.is_set():
                 try:
-                    await asyncio.wait_for(asyncio.shield(stop_ping.wait()), timeout=20.0)
+                    await asyncio.wait_for(asyncio.shield(stop_ping.wait()), timeout=8.0)
                 except asyncio.TimeoutError:
                     try:
                         await websocket.send_json({"type": "ping"})
+                        if is_generating and not stop_ping.is_set():
+                            msg = cool_messages[idx % len(cool_messages)]
+                            await websocket.send_json({"type": "status", "message": msg})
+                            idx += 1
                     except Exception:
                         break
 
         ping_task = asyncio.create_task(_keepalive())
 
-        # Yield text chunks — stream_llm_async yields (kind, text) tuples
-        # kind='thinking' during model reasoning, kind='chunk' for final response, kind='usage' for stats
         llm_usage = None
         try:
-            async for kind, content in stream_llm_async(prompt):
-                if kind == "usage":
-                    llm_usage = content
-                elif content:
-                    await websocket.send_json({"type": kind, "text": content})
+            if llm_queue_lock.locked():
+                await websocket.send_json({"type": "status", "message": "Waiting in queue... (Server is busy)"})
+                
+            async with llm_queue_lock:
+                is_generating = True
+                await websocket.send_json({"type": "status", "message": "Applying Core PSAK 115 Principles..."})
+                
+                # The /analyze endpoint is forced to 'ollama' in this specific flow.
+                provider = "ollama"
+                llm_model = OLLAMA_MODEL or ""
+
+                # Yield metadata first (only right before generation)
+                metadata = {
+                    "type": "metadata",
+                    "data": {
+                        "ratios": {k: round(v, 6) for k, v in ratios.items()},
+                        "m_score": round(m_score, 6),
+                        "risk_status": risk_status,
+                        "llm_provider": provider,
+                        "llm_model": llm_model,
+                    },
+                }
+                await websocket.send_json(metadata)
+
+                # Yield text chunks
+                async for kind, content in stream_llm_async(prompt):
+                    if kind == "usage":
+                        llm_usage = content
+                    elif content:
+                        await websocket.send_json({"type": kind, "text": content})
         except Exception as e:
             await websocket.send_json({"type": "error", "text": str(e)})
         finally:
