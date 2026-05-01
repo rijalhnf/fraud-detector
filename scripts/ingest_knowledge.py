@@ -48,19 +48,39 @@ def extract_text(file_path: Path) -> str:
 
 
 def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 200) -> Iterable[str]:
-    cleaned = " ".join(text.split())
+    # Clean up excessive whitespace but preserve newlines
+    lines = [line.strip() for line in text.split("\n")]
+    cleaned = "\n".join(line for line in lines if line)
+    
     if not cleaned:
         return []
 
     chunks: list[str] = []
     start = 0
     n = len(cleaned)
+    
     while start < n:
         end = min(start + chunk_size, n)
-        chunks.append(cleaned[start:end])
-        if end == n:
+        
+        # Try to find a natural break point (newline or period) within the overlap zone
+        if end < n:
+            # Look back up to 'overlap' characters to find a newline
+            newline_pos = cleaned.rfind("\n", max(start, end - overlap), end)
+            if newline_pos != -1:
+                end = newline_pos + 1
+            else:
+                # Fallback to period if no newline
+                period_pos = cleaned.rfind(". ", max(start, end - overlap), end)
+                if period_pos != -1:
+                    end = period_pos + 2
+
+        chunks.append(cleaned[start:end].strip())
+        
+        if end >= n:
             break
-        start = max(end - overlap, 0)
+            
+        start = end
+        
     return chunks
 
 
