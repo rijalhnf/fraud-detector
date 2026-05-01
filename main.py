@@ -928,7 +928,7 @@ def query_chromadb_context(
     query_text: str,
     db_path: str | None = None,
     collection_name: str | None = None,
-    top_k: int = 4,
+    top_k: int = 2,
 ) -> dict[str, Any]:
     db_path = db_path or os.getenv("CHROMA_DB_PATH", "./chroma_db")
     collection_name = collection_name or os.getenv("CHROMA_COLLECTION_NAME", "fraud_knowledge")
@@ -1087,7 +1087,7 @@ async def _stream_ollama_async(prompt: str):
         "prompt": prompt,
         "stream": True,
         "think": False,
-        "options": {"temperature": 0.3, "num_ctx": 8192},
+        "options": {"temperature": 0.3, "top_p": 0.95, "top_k": 64, "num_ctx": 4096},
     }
     in_think_tag = False  # fallback parser state for inline <think> tags
 
@@ -1254,7 +1254,7 @@ def _call_ollama(prompt: str) -> tuple[str, str, str, str, dict[str, Any] | None
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.2, "num_ctx": 4096},
+        "options": {"temperature": 0.2, "top_p": 0.95, "top_k": 64, "num_ctx": 4096},
     }
     try:
         response = requests.post(f"{base_url}/api/generate", json=payload, timeout=600)
