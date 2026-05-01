@@ -75,7 +75,7 @@ Instructions:
    If no RAG context is available, state the general principle without citing
    specific article numbers to avoid hallucination.
 5) Provide 2-3 concrete recommended follow-up audit procedures.
-6) Keep response under 250 words.
+6) Provide a comprehensive and highly detailed forensic analysis (at least 400 words).
 7) Write the entire response in Bahasa Indonesia professional.
 """.strip()
 
