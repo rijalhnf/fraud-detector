@@ -829,8 +829,8 @@ def health() -> dict[str, Any]:
     }
 
 
-@app.post("/api/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+@app.post("/api/upload", response_model=UploadResponse)
+async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     started_at = time.perf_counter()
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
@@ -838,46 +838,25 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
 
-    async def generate_response():
-        # Run synchronous OCR in a background thread
-        task = asyncio.create_task(asyncio.to_thread(extract_financial_variables, pdf_bytes))
-        
-        # Yield whitespace every 10 seconds to keep Cloudflare connection alive (prevent 524)
-        while not task.done():
-            yield b" "
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-                break
-            except asyncio.TimeoutError:
-                continue
-
-        try:
-            extracted_variables, extraction_note, ocr_provider, ocr_model, ocr_raw_response, ocr_usage = task.result()
-            ocr_estimated_cost_usd = _to_float_or_none(ocr_usage.get("estimated_cost_usd")) if isinstance(ocr_usage, dict) else None
-            preview = (
-                f"AI OCR processed {file.filename or 'uploaded.pdf'} and extracted "
-                f"{sum(1 for v in extracted_variables.values() if v is not None)} financial fields."
-            )
-            resp = UploadResponse(
-                filename=file.filename or "uploaded.pdf",
-                extraction_note=extraction_note,
-                extracted_text_preview=preview,
-                extracted_variables=extracted_variables,
-                ocr_provider=ocr_provider,
-                ocr_model=ocr_model,
-                ocr_raw_response=ocr_raw_response,
-                ocr_usage=ocr_usage,
-                ocr_estimated_cost_usd=ocr_estimated_cost_usd,
-                responded_at=_iso_utc_now(),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
-            )
-            yield resp.model_dump_json().encode("utf-8")
-        except Exception as e:
-            # Because headers are already sent as 200 OK, we must yield a JSON error
-            error_msg = getattr(e, "detail", str(e))
-            yield json.dumps({"error": error_msg}).encode("utf-8")
-
-    return StreamingResponse(generate_response(), media_type="application/json")
+    extracted_variables, extraction_note, ocr_provider, ocr_model, ocr_raw_response, ocr_usage = extract_financial_variables(pdf_bytes)
+    ocr_estimated_cost_usd = _to_float_or_none(ocr_usage.get("estimated_cost_usd")) if isinstance(ocr_usage, dict) else None
+    preview = (
+        f"AI OCR processed {file.filename or 'uploaded.pdf'} and extracted "
+        f"{sum(1 for v in extracted_variables.values() if v is not None)} financial fields."
+    )
+    return UploadResponse(
+        filename=file.filename or "uploaded.pdf",
+        extraction_note=extraction_note,
+        extracted_text_preview=preview,
+        extracted_variables=extracted_variables,
+        ocr_provider=ocr_provider,
+        ocr_model=ocr_model,
+        ocr_raw_response=ocr_raw_response,
+        ocr_usage=ocr_usage,
+        ocr_estimated_cost_usd=ocr_estimated_cost_usd,
+        responded_at=_iso_utc_now(),
+        duration_ms=round((time.perf_counter() - started_at) * 1000, 3),
+    )
 
 
 @app.post("/api/analyze")
