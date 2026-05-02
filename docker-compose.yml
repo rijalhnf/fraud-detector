@@ -8,6 +8,7 @@ services:
     environment:
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      OPENROUTER_VISION_MODEL: ${OPENROUTER_VISION_MODEL:-google/gemini-2.5-flash}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your-openrouter-api-key-here}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL}
@@ -38,6 +39,7 @@ services:
     environment:
       AI_PROVIDER: ${AI_PROVIDER:-openrouter}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3-8b-instruct:free}
+      OPENROUTER_VISION_MODEL: ${OPENROUTER_VISION_MODEL:-google/gemini-2.5-flash}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-your-openrouter-api-key-here}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}

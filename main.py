@@ -35,6 +35,7 @@ ALLOWED_ORIGINS = [
 AI_PROVIDER = os.getenv("AI_PROVIDER")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
+OPENROUTER_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", OPENROUTER_MODEL)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OCR_MAX_PAGES = int(os.getenv("OCR_MAX_PAGES", "10"))
 OCR_RENDER_SCALE = float(os.getenv("OCR_RENDER_SCALE", "2.0"))
@@ -409,15 +410,15 @@ def _normalize_ocr_variables(payload: Any) -> tuple[dict[str, float | None], int
 def _call_openrouter_vision(prompt: str, images_b64: list[str]) -> tuple[str, dict[str, Any]]:
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY is missing.")
-    if not OPENROUTER_MODEL:
-        raise HTTPException(status_code=500, detail="OPENROUTER_MODEL is missing.")
+    if not OPENROUTER_VISION_MODEL:
+        raise HTTPException(status_code=500, detail="OPENROUTER_VISION_MODEL is missing.")
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for image_b64 in images_b64:
         content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}})
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": OPENROUTER_VISION_MODEL,
         "messages": [
             {"role": "system", "content": "You are a precise financial statement OCR extraction assistant. Return only valid JSON, no markdown, no explanation."},
             {"role": "user", "content": content},
@@ -464,13 +465,12 @@ def extract_financial_variables(pdf_bytes: bytes) -> tuple[dict[str, float | Non
         raise HTTPException(status_code=400, detail="Uploaded PDF does not contain any renderable pages.")
     fields_json = json.dumps(_default_mock_variables(), ensure_ascii=True, indent=2)
     prompt = build_ocr_prompt(page_count=page_count, processed_pages=processed_pages, fields_json=fields_json)
-    provider = (AI_PROVIDER or "").strip().lower()
+    # Force OpenRouter for OCR to avoid 10-minute local CPU timeouts
+    provider = "openrouter"
     if provider == "openrouter":
         raw_response, usage = _call_openrouter_vision(prompt, images_b64)
-    elif provider in ("ollama", "local"):
-        raw_response, usage = _call_ollama_vision(prompt, images_b64)
     else:
-        raise HTTPException(status_code=500, detail="AI_PROVIDER must be 'openrouter', 'ollama', or 'local'.")
+        raise HTTPException(status_code=500, detail="OpenRouter must be configured for OCR.")
     try:
         extracted_payload = _extract_json_object(raw_response)
     except ValueError as exc:
