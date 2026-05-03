@@ -111,6 +111,10 @@ Previous Beneish M-Score Results:
 Retrieved Context (RAG from PSAK 115 / PSAK 72 and OJK sanction-related references):
 {chr(10).join(context_lines)}
 
+CORE PSAK 115 PRINCIPLES (Always apply these to your analysis):
+Revenue must be recognized when the entity transfers control of goods/services to the customer, following the 5-Step Model: (1) Identify the contract, (2) Identify performance obligations, (3) Determine transaction price, (4) Allocate price, (5) Recognize revenue. 
+Forensic Note: Fraud typically occurs by accelerating Step 5 (e.g., fictitious sales -> high DSRI), ignoring Step 2 (bundling -> distorted margins), or overestimating Step 3 (ignoring discounts/returns).
+
 Excerpts from the uploaded CaLK document (truncated):
 {text_content}
 

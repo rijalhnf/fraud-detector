@@ -427,7 +427,11 @@ def _call_openrouter_vision(prompt: str, images_b64: list[str]) -> tuple[str, di
         "max_tokens": 2000,
     }
     response = requests.post(url, headers=headers, json=payload, timeout=180)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        error_detail = response.text if hasattr(response, "text") else str(e)
+        raise HTTPException(status_code=400, detail=f"OpenRouter API Error: {error_detail}")
     data = response.json()
     usage = data.get("usage", {})
     cost_usd = _extract_openrouter_cost_usd(data)
