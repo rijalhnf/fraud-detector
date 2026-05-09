@@ -29,22 +29,40 @@ FastAPI backend for a two-step fraud analysis workflow:
 
 ## API Flow
 
-### Endpoint 1: POST /api/upload
+### 0. Health Check: `GET /health`
+
+- Verifies connectivity to the AI provider (OpenRouter or Ollama).
+- Checks ChromaDB status and knowledge document count.
+- Returns system metadata and response duration.
+
+### 1. Document OCR: `POST /api/upload`
 
 - Accepts a PDF file upload.
-- Renders the PDF pages as images and sends them to the configured AI provider for OCR.
-- Extracts Beneish input variables from the model response.
-- Intended for short financial statement PDFs, usually about 2 to 4 pages.
-- Returns extracted variables to frontend for user validation.
+- Renders PDF pages as images and sends them to OpenRouter/Ollama for structured extraction.
+- Extracts 24+ financial variables required for Beneish M-Score calculation.
+- Returns variables to the frontend for user validation/correction.
 
-### Endpoint 2: POST /api/analyze
+### 2. Standard Analysis: `POST /api/analyze`
 
-Accepts validated variables from frontend, then executes:
+- Accepts validated financial variables.
+- **Step A**: Computes 8 Beneish ratios and the final M-Score.
+- **Step B**: Queries ChromaDB (RAG) for relevant PSAK 115 / OJK regulations.
+- **Step C**: Streams the LLM narrative via **Server-Sent Events (SSE)**.
+- Returns ratios, M-Score, risk status, and real-time narrative chunks.
 
-- Step A: Compute Beneish ratios and final M-Score.
-- Step B: Query ChromaDB for relevant context.
-- Step C: Build prompt and call Ollama.
-- Step D: Return ratios, M-Score, risk status, and LLM narrative.
+### 3. WebSocket Analysis: `WS /api/ws/analyze`
+
+- A real-time alternative to the standard analysis.
+- Provides granular status updates (e.g., "Analyzing Step 5 Revenue Recognition...").
+- Features a keepalive mechanism to prevent timeouts during long LLM inferences.
+- Streams both "thinking" tokens (reasoning) and final response chunks.
+
+### 4. Deep CaLK Analysis: `POST /api/analyze-calk`
+
+- Accepts a PDF (Notes to Financial Statements) and existing M-Score results.
+- Extracts full text (up to 400,000 characters) from the document.
+- Performs high-context forensic analysis by cross-referencing raw notes with Beneish red flags and RAG context.
+- Optimized for large context windows (e.g., Gemini or DeepSeek via OpenRouter).
 
 ## Required Environment Variables
 
@@ -87,7 +105,7 @@ docker compose exec api python scripts/ingest_knowledge.py --input-dir /app/know
 When it finishes, the terminal will output the number of chunks added to the database.
 
 **Step 5: Test the API**
-Verify the backend is running by opening `http://localhost:8000/health` in your browser.
+Verify the backend is running by opening `http://localhost:8001/health` in your browser.
 
 ### Changing ENV
 
@@ -127,12 +145,13 @@ In Docker Compose, `OLLAMA_BASE_URL` is set to:
 Recommended for VPS security:
 
 - Keep Ollama bound to localhost only (`127.0.0.1:11434`) and do not expose port `11434` publicly.
-- Keep API public via port `8000` (or reverse proxy), while Ollama remains private.
+- Keep API public via port `8001` (or reverse proxy), while Ollama remains private.
 - If Ollama runs on another private host, update this value in `docker-compose.yml`.
 
-## Example Analyze Payload
+## Example Payloads
 
-Use this as JSON body for `POST /api/analyze`:
+### POST /api/analyze (SSE)
+Uses `FinancialVariables` model.
 
 ```json
 {
@@ -163,10 +182,30 @@ Use this as JSON body for `POST /api/analyze`:
 }
 ```
 
+### POST /api/analyze-calk (Multipart Form)
+Used for deep forensic analysis of "Catatan atas Laporan Keuangan" (CaLK).
+
+- `file`: The PDF document containing financial notes.
+- `m_score`: The M-Score calculated in the previous step (float).
+- `risk_status`: The risk classification string.
+- `ratios_json`: JSON string of the 8 Beneish ratios.
+- `extracted_variables_json`: (Optional) JSON string of the raw variables.
+
+### WS /api/ws/analyze (WebSocket)
+Send a JSON object matching the `FinancialVariables` model. The server will respond with multiple messages:
+1. `{"type": "status", "message": "..."}`: Progress updates.
+2. `{"type": "metadata", "data": {...}}`: Ratios and M-Score.
+3. `{"type": "thinking", "text": "..."}`: LLM reasoning (if supported by model).
+4. `{"type": "chunk", "text": "..."}`: Narrative tokens.
+5. `{"type": "done", "duration_ms": ...}`: Final completion signal.
+
 ## Project Files
 
-- `main.py`: FastAPI app and fraud analysis flow.
+- `main.py`: FastAPI app, route handlers, and analysis logic.
+- `models.py`: Pydantic models for request/response validation.
+- `prompts_analyze.py`: Prompt templates for forensic narrative generation.
+- `prompts_ocr.py`: Prompt templates for structured financial OCR.
+- `scripts/ingest_knowledge.py`: RAG ingestion script for ChromaDB.
 - `requirements.txt`: Python dependencies.
 - `Dockerfile`: Container image build instructions.
 - `docker-compose.yml`: Standard and production profile services.
-- `.dockerignore`: Docker build context exclusions.
