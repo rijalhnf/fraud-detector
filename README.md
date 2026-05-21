@@ -59,7 +59,7 @@ FastAPI backend for a two-step fraud analysis workflow:
 
 ### 4. Deep CaLK Analysis: `POST /api/analyze-calk`
 
-- Accepts a PDF (Notes to Financial Statements) and existing M-Score results.
+- Accepts a PDF, Markdown, plain text, or JSON file (Notes to Financial Statements) and existing M-Score results.
 - Extracts full text (up to 400,000 characters) from the document.
 - Performs high-context forensic analysis by cross-referencing raw notes with Beneish red flags and RAG context.
 - Optimized for large context windows (e.g., Gemini or DeepSeek via OpenRouter).
@@ -185,7 +185,7 @@ Uses `FinancialVariables` model.
 ### POST /api/analyze-calk (Multipart Form)
 Used for deep forensic analysis of "Catatan atas Laporan Keuangan" (CaLK).
 
-- `file`: The PDF document containing financial notes.
+- `file`: A document file (.pdf, .md, .txt, or .json) containing financial notes.
 - `m_score`: The M-Score calculated in the previous step (float).
 - `risk_status`: The risk classification string.
 - `ratios_json`: JSON string of the 8 Beneish ratios.

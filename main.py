@@ -1040,19 +1040,33 @@ async def analyze_calk(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only .pdf, .md, .txt, and .json files are accepted.")
 
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    # Detect file type and extract text accordingly
+    file_type = file.content_type or ""
+    filename = file.filename or ""
+    
     try:
-        import fitz  # type: ignore
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-            text_content = ""
-            # Extract text from all pages since CaLK notes can be deep in the document
-            for page in doc:
-                text_content += page.get_text() + "\n"
+        if file_type == "application/pdf" or filename.lower().endswith(".pdf"):
+            # Handle PDF files using PyMuPDF
+            import fitz  # type: ignore
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                text_content = ""
+                # Extract text from all pages since CaLK notes can be deep in the document
+                for page in doc:
+                    text_content += page.get_text() + "\n"
+        elif file_type in ("text/plain", "text/markdown") or filename.lower().endswith((".txt", ".md")):
+            # Handle text files
+            text_content = file_bytes.decode("utf-8", errors="replace")
+        elif file_type == "application/json" or filename.lower().endswith(".json"):
+            # Handle JSON files - decode and optionally pretty-print
+            text_content = file_bytes.decode("utf-8", errors="replace")
+        else:
+            raise ValueError(f"Unsupported file type: {file_type}")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to extract text from CaLK PDF: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract text from uploaded file: {exc}")
 
     # Truncate text to approx 400,000 characters (roughly 100k tokens) to fit in modern context windows safely
     text_content = text_content[:400000]
