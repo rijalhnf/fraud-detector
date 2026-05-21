@@ -836,8 +836,9 @@ def health() -> dict[str, Any]:
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)) -> UploadResponse:
     started_at = time.perf_counter()
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+    allowed_types = ["application/pdf", "text/plain", "text/markdown", "application/json"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only .pdf, .md, .txt, and .json files are accepted.")
     pdf_bytes = await file.read()
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="Uploaded PDF is empty.")
@@ -1035,8 +1036,9 @@ async def analyze_calk(
     extracted_variables_json: str = Form(default="{}"),
 ) -> AnalyzeCalkResponse:
     started_at = time.perf_counter()
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+    allowed_types = ["application/pdf", "text/plain", "text/markdown", "application/json"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only .pdf, .md, .txt, and .json files are accepted.")
 
     pdf_bytes = await file.read()
     if not pdf_bytes:
